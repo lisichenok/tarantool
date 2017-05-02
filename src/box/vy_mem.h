@@ -351,6 +351,24 @@ vy_mem_iterator_open(struct vy_mem_iterator *itr, struct vy_iterator_stat *stat,
 		     struct vy_mem *mem, enum iterator_type iterator_type,
 		     const struct tuple *key, const struct vy_read_view **rv);
 
+/**
+ * Simple stream over a mem. @see vy_stmt_stream.
+ */
+struct vy_mem_stream {
+	/** Parent class, must be the first member */
+	struct vy_stmt_stream base;
+	/** Mem to stream */
+	struct vy_mem *mem;
+	/** Current position */
+	struct vy_mem_tree_iterator curr_pos;
+};
+
+/**
+ * Open a mem stream. Use vy_stmt_stream api for further work.
+ */
+void
+vy_mem_stream_open(struct vy_mem_stream *strm, struct vy_mem *mem);
+
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */

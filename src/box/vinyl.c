@@ -344,35 +344,6 @@ vy_stat_tx_write_rate(struct vy_stat *s)
 	return rmean_mean(s->rmean, VY_STAT_TX_WRITE);
 }
 
-/**
- * Apply the UPSERT statement to the REPLACE, UPSERT or DELETE statement.
- * If the second statement is
- * - REPLACE then update operations of the first one will be applied to the
- *   second and a REPLACE statement will be returned;
- *
- * - UPSERT then the new UPSERT will be created with combined operations of both
- *   arguments;
- *
- * - DELETE or NULL then the first one will be turned into REPLACE and returned
- *   as the result;
- *
- * @param upsert         An UPSERT statement.
- * @param object         An REPLACE/DELETE/UPSERT statement or NULL.
- * @param key_def        Key definition of an index.
- * @param format         Format for REPLACE/DELETE tuples.
- * @param upsert_format  Format for UPSERT tuples.
- * @param is_primary     True if the index is primary.
- * @param suppress_error True if ClientErrors must not be written to log.
- *
- * @retval NULL     Memory allocation error.
- * @retval not NULL Success.
- */
-static struct tuple *
-vy_apply_upsert(const struct tuple *new_stmt, const struct tuple *old_stmt,
-		const struct key_def *key_def, struct tuple_format *format,
-		struct tuple_format *upsert_format, bool is_primary,
-		bool suppress_error, struct vy_stat *stat);
-
 struct vy_range {
 	/** Unique ID of this range. */
 	int64_t   id;
@@ -5760,7 +5731,7 @@ vy_upsert_try_to_squash(struct tuple_format *format, struct region *region,
 	return 0;
 }
 
-static struct tuple *
+struct tuple *
 vy_apply_upsert(const struct tuple *new_stmt, const struct tuple *old_stmt,
 		const struct key_def *key_def, struct tuple_format *format,
 		struct tuple_format *upsert_format, bool is_primary,

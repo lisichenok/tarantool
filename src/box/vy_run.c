@@ -1609,3 +1609,113 @@ vy_run_recover(struct vy_run *run, const char *index_path,
 	return -1;
 }
 
+static NODISCARD int
+vy_run_stream_read_page(struct vy_run_stream *strm)
+{
+	ZSTD_DStream *zdctx = tt_pthread_getspecific(*strm->zdctx_key);
+	if (zdctx == NULL) {
+		zdctx = ZSTD_createDStream();
+		if (zdctx == NULL) {
+			diag_set(OutOfMemory, sizeof(zdctx), "malloc",
+				 "zstd context");
+			return -1;
+		}
+		tt_pthread_setspecific(*strm->zdctx_key, zdctx);
+	}
+
+	struct vy_page_info *page_info = vy_run_page_info(strm->run,
+							  strm->page_no);
+	strm->page = vy_page_new(page_info);
+	if (strm->page == NULL)
+		return -1;
+
+	if (vy_page_read(strm->page, page_info, strm->run->fd, zdctx) != 0) {
+		vy_page_delete(strm->page);
+		strm->page = NULL;
+		return -1;
+	}
+	return 0;
+
+}
+
+static NODISCARD int
+vy_run_stream_next(struct vy_stmt_stream *virt_stream, const struct tuple **ret)
+{
+	assert(virt_stream->iface->next == vy_run_stream_next);
+	struct vy_run_stream *strm = (struct vy_run_stream *)virt_stream;
+	if (strm->page_no >= strm->run->info.count) {
+		*ret = NULL;
+		return 0;
+	}
+
+	if (strm->tuple != NULL) {
+		tuple_unref(strm->tuple);
+		strm->tuple = NULL;
+	}
+
+	if (strm->page == NULL && vy_run_stream_read_page(strm) != 0)
+		return -1;
+
+	strm->tuple = vy_page_stmt(strm->page, strm->pos_in_page, strm->key_def,
+				   strm->format, strm->upsert_format,
+				   strm->is_primary);
+
+	if (strm->tuple == NULL)
+		return -1;
+
+	tuple_ref(strm->tuple);
+	*ret = strm->tuple;
+
+	struct vy_page_info *page_info = vy_run_page_info(strm->run,
+							  strm->page_no);
+	strm->pos_in_page++;
+	if (strm->pos_in_page >= page_info->count) {
+		vy_page_delete(strm->page);
+		strm->page = NULL;
+		strm->page_no++;
+		strm->pos_in_page = 0;
+	}
+
+	return 0;
+}
+
+static void
+vy_run_stream_close(struct vy_stmt_stream *virt_stream)
+{
+	assert(virt_stream->iface->close == vy_run_stream_close);
+	struct vy_run_stream *strm = (struct vy_run_stream *)virt_stream;
+	if (strm->page != NULL) {
+		vy_page_delete(strm->page);
+		strm->page = NULL;
+	}
+	if (strm->tuple != NULL) {
+		tuple_unref(strm->tuple);
+		strm->tuple = NULL;
+	}
+}
+
+static const struct vy_stmt_stream_iface vy_run_stream_iface = {
+	.next = vy_run_stream_next,
+	.close = vy_run_stream_close
+};
+
+void
+vy_run_stream_open(struct vy_run_stream *strm, struct vy_run *run,
+		   const struct key_def *key_def, struct tuple_format *format,
+		   struct tuple_format *upsert_format, pthread_key_t *zdctx_key,
+		   bool is_primary)
+{
+	strm->base.iface = &vy_run_stream_iface;
+
+	strm->page_no = 0;
+	strm->pos_in_page = 0;
+	strm->page = NULL;
+	strm->tuple = NULL;
+
+	strm->run = run;
+	strm->key_def = key_def;
+	strm->format = format;
+	strm->upsert_format = upsert_format;
+	strm->zdctx_key = zdctx_key;
+	strm->is_primary = is_primary;
+}

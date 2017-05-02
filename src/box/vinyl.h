@@ -310,6 +310,38 @@ int
 vy_backup(struct vy_env *env, struct vclock *vclock,
 	  int (*cb)(const char *, void *), void *cb_arg);
 
+struct vy_stat;
+struct key_def;
+
+/**
+ * Apply the UPSERT statement to the REPLACE, UPSERT or DELETE statement.
+ * If the second statement is
+ * - REPLACE then update operations of the first one will be applied to the
+ *   second and a REPLACE statement will be returned;
+ *
+ * - UPSERT then the new UPSERT will be created with combined operations of both
+ *   arguments;
+ *
+ * - DELETE or NULL then the first one will be turned into REPLACE and returned
+ *   as the result;
+ *
+ * @param new_stmt       An UPSERT statement.
+ * @param old_stmt       An REPLACE/DELETE/UPSERT statement or NULL.
+ * @param key_def        Key definition of an index.
+ * @param format         Format for REPLACE/DELETE tuples.
+ * @param upsert_format  Format for UPSERT tuples.
+ * @param is_primary     True if the index is primary.
+ * @param suppress_error True if ClientErrors must not be written to log.
+ *
+ * @retval NULL     Memory allocation error.
+ * @retval not NULL Success.
+ */
+struct tuple *
+vy_apply_upsert(const struct tuple *new_stmt, const struct tuple *old_stmt,
+		const struct key_def *key_def, struct tuple_format *format,
+		struct tuple_format *upsert_format, bool is_primary,
+		bool suppress_error, struct vy_stat *stat);
+
 #ifdef __cplusplus
 }
 #endif
