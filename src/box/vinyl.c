@@ -5443,13 +5443,29 @@ fail_user_index_def:
 int
 vy_prepare_alter_space(struct space *old_space, struct space *new_space)
 {
-	if (old_space->index_count &&
-	    old_space->index_count <= new_space->index_count) {
-		struct vy_index *pk = vy_index(old_space->index[0]);
-		if (pk->env->status == VINYL_ONLINE && pk->stmt_count != 0) {
+	if (old_space->index_count == 0)
+		return 0;
+	struct vy_index *pk = vy_index(old_space->index[0]);
+	bool is_empty = pk->env->status != VINYL_ONLINE || pk->stmt_count == 0;
+	if (old_space->index_count < new_space->index_count) {
+		if (! is_empty) {
 			diag_set(ClientError, ER_UNSUPPORTED, "Vinyl",
-				 "altering not empty space");
+				 "creating new indexes for a not empty space");
 			return -1;
+		}
+	}
+	if (old_space->index_count != 0 &&
+	    old_space->index_count == new_space->index_count && !is_empty) {
+		/* Check index_defs to be unchanged. */
+		for (uint32_t i = 0; i < old_space->index_count; ++i) {
+			struct index_def *old = index_def(old_space->index[i]);
+			struct index_def *new = index_def(new_space->index[i]);
+			if (index_def_cmp(old, new) != 0) {
+				diag_set(ClientError, ER_UNSUPPORTED, "Vinyl",
+					 "altering definition of not empty "\
+					 "indexes");
+				return -1;
+			}
 		}
 	}
 	return 0;

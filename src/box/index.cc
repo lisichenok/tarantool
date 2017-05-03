@@ -322,6 +322,12 @@ box_index_key_def(uint32_t space_id, uint32_t index_id)
 	}
 }
 
+struct index_def *
+index_def(struct Index *index)
+{
+	return index->index_def;
+}
+
 ssize_t
 box_index_len(uint32_t space_id, uint32_t index_id)
 {

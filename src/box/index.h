@@ -38,6 +38,7 @@ extern "C" {
 #endif /* defined(__cplusplus) */
 
 typedef struct tuple box_tuple_t;
+struct Index;
 
 /** \cond public */
 /** A space iterator */
@@ -276,6 +277,9 @@ box_index_info(uint32_t space_id, uint32_t index_id,
 	       struct info_handler *info);
 
 extern const char *iterator_type_strs[];
+
+struct index_def *
+index_def(struct Index *index);
 
 #if defined(__cplusplus)
 } /* extern "C" */

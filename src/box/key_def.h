@@ -581,6 +581,14 @@ key_mp_type_validate(enum field_type key_type, enum mp_type mp_type,
 	return 0;
 }
 
+/**
+ * One key definition is greater than the other if it's id is
+ * greater, it's name is greater,  it's index type is greater
+ * (HASH < TREE < BITSET) or its key part array is greater.
+ */
+int
+index_def_cmp(const struct index_def *key1, const struct index_def *key2);
+
 #if defined(__cplusplus)
 } /* extern "C" */
 
@@ -604,14 +612,6 @@ key_mp_type_validate(enum field_type key_type, enum mp_type mp_type,
 int
 key_part_cmp(const struct key_part *parts1, uint32_t part_count1,
 	     const struct key_part *parts2, uint32_t part_count2);
-
-/**
- * One key definition is greater than the other if it's id is
- * greater, it's name is greater,  it's index type is greater
- * (HASH < TREE < BITSET) or its key part array is greater.
- */
-int
-index_def_cmp(const struct index_def *key1, const struct index_def *key2);
 
 /**
  * Check a key definition for violation of various limits.
