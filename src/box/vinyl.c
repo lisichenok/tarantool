@@ -5440,6 +5440,29 @@ fail_user_index_def:
 	return NULL;
 }
 
+/**
+ * True if the index def can be updated to the new one.
+ *
+ * @param old_def Old definition of the index.
+ * @param new_def New definition of the same index.
+ */
+bool
+vy_check_index_def_unchanged(struct index_def *old_def, struct index_def *new_def)
+{
+	assert(old_def->space_id == new_def->space_id);
+	if (old_def->iid != new_def->iid)
+		return false;
+	if (strcmp(old_def->name, new_def->name) != 0)
+		return false;
+	if (old_def->type != new_def->type)
+		return false;
+	if (old_def->opts.is_unique != new_def->opts.is_unique)
+		return false;
+	return key_part_cmp(old_def->key_def.parts, old_def->key_def.part_count,
+			    new_def->key_def.parts,
+			    new_def->key_def.part_count) == 0;
+}
+
 int
 vy_prepare_alter_space(struct space *old_space, struct space *new_space)
 {
@@ -5458,9 +5481,10 @@ vy_prepare_alter_space(struct space *old_space, struct space *new_space)
 	    old_space->index_count == new_space->index_count && !is_empty) {
 		/* Check index_defs to be unchanged. */
 		for (uint32_t i = 0; i < old_space->index_count; ++i) {
-			struct index_def *old = index_def(old_space->index[i]);
-			struct index_def *new = index_def(new_space->index[i]);
-			if (index_def_cmp(old, new) != 0) {
+			struct index_def *old_def, *new_def;
+			old_def = index_def(old_space->index[i]);
+			new_def = index_def(new_space->index[i]);
+			if (! vy_check_index_def_unchanged(old_def, new_def)) {
 				diag_set(ClientError, ER_UNSUPPORTED, "Vinyl",
 					 "altering definition of not empty "\
 					 "indexes");
@@ -5476,6 +5500,9 @@ vy_commit_alter_space(struct space *old_space, struct space *new_space)
 {
 	(void) old_space;
 	struct vy_index *pk = vy_index(new_space->index[0]);
+	struct index_def *new_user_def = index_def(new_space->index[0]);
+	assert(vy_check_index_def_unchanged(new_user_def, pk->user_index_def));
+
 	pk->space = new_space;
 
 	/* Update the format with column mask. */
@@ -5494,6 +5521,10 @@ vy_commit_alter_space(struct space *old_space, struct space *new_space)
 	}
 	tuple_format_ref(upsert_format, 1);
 
+	/* Set possibly changed opts. */
+	pk->user_index_def->opts = new_user_def->opts;
+	pk->index_def->opts = new_user_def->opts;
+
 	/* Set new formats. */
 	tuple_format_ref(pk->space_format, -1);
 	tuple_format_ref(pk->upsert_format, -1);
@@ -5506,6 +5537,11 @@ vy_commit_alter_space(struct space *old_space, struct space *new_space)
 
 	for (uint32_t i = 1; i < new_space->index_count; ++i) {
 		struct vy_index *index = vy_index(new_space->index[i]);
+		new_user_def = index_def(new_space->index[i]);
+		assert(vy_check_index_def_unchanged(new_user_def,
+						    index->user_index_def));
+		index->user_index_def->opts = new_user_def->opts;
+		index->index_def->opts = new_user_def->opts;
 		index->space = new_space;
 		tuple_format_ref(index->space_format_with_colmask, -1);
 		tuple_format_ref(index->space_format, -1);

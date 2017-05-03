@@ -223,6 +223,15 @@ index_opts_cmp(const struct index_opts *o1, const struct index_opts *o2)
 		return o1->dimension < o2->dimension ? -1 : 1;
 	if (o1->distance != o2->distance)
 		return o1->distance < o2->distance ? -1 : 1;
+	if (o1->range_size != o2->range_size)
+		return o1->range_size < o2->range_size ? -1 : 1;
+	if (o1->page_size != o2->page_size)
+		return o1->page_size < o2->page_size ? -1 : 1;
+	if (o1->run_count_per_level != o2->run_count_per_level)
+		return o1->run_count_per_level < o2->run_count_per_level ?
+		       -1 : 1;
+	if (o1->run_size_ratio != o2->run_size_ratio)
+		return o1->run_size_ratio < o2->run_size_ratio ? -1 : 1;
 	return 0;
 }
 
@@ -589,9 +598,6 @@ key_mp_type_validate(enum field_type key_type, enum mp_type mp_type,
 int
 index_def_cmp(const struct index_def *key1, const struct index_def *key2);
 
-#if defined(__cplusplus)
-} /* extern "C" */
-
 /** Compare two key part arrays.
  *
  * This function is used to find out whether alteration
@@ -612,6 +618,10 @@ index_def_cmp(const struct index_def *key1, const struct index_def *key2);
 int
 key_part_cmp(const struct key_part *parts1, uint32_t part_count1,
 	     const struct key_part *parts2, uint32_t part_count2);
+
+#if defined(__cplusplus)
+} /* extern "C" */
+
 
 /**
  * Check a key definition for violation of various limits.

@@ -251,6 +251,7 @@ public:
 	 */
 	virtual void commitAlterSpace(struct space *old_space,
 				      struct space *new_space);
+
 	Engine *engine;
 };
 

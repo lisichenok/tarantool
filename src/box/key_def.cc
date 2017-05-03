@@ -273,14 +273,16 @@ key_part_cmp(const struct key_part *parts1, uint32_t part_count1,
 int
 index_def_cmp(const struct index_def *key1, const struct index_def *key2)
 {
+	assert(key1->space_id == key2->space_id);
 	if (key1->iid != key2->iid)
 		return key1->iid < key2->iid ? -1 : 1;
 	if (strcmp(key1->name, key2->name))
 		return strcmp(key1->name, key2->name);
 	if (key1->type != key2->type)
 		return (int) key1->type < (int) key2->type ? -1 : 1;
-	if (index_opts_cmp(&key1->opts, &key2->opts))
-		return index_opts_cmp(&key1->opts, &key2->opts);
+	int rc = index_opts_cmp(&key1->opts, &key2->opts);
+	if (rc != 0)
+		return rc;
 
 	return key_part_cmp(key1->key_def.parts, key1->key_def.part_count,
 			    key2->key_def.parts, key2->key_def.part_count);
