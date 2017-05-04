@@ -156,7 +156,8 @@ end;
 ...
 info;
 ---
-- - - count: 0
+- - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -166,7 +167,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -176,7 +178,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -186,7 +189,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -196,7 +200,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -206,7 +211,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -216,7 +222,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -226,7 +233,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -236,7 +244,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -246,7 +255,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -256,7 +266,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -266,7 +277,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -276,7 +288,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -286,7 +299,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -296,7 +310,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024
@@ -306,7 +321,8 @@ info;
     - run_count: 0
     - run_histogram: '[0]:1'
     - size: 0
-  - - count: 0
+  - - bloom_fpr: 0.05
+    - count: 0
     - memory_used: 0
     - page_count: 0
     - page_size: 1024

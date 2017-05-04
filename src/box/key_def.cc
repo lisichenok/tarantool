@@ -121,6 +121,7 @@ const struct index_opts index_opts_default = {
 	/* .run_count_per_level = */ 2,
 	/* .run_size_ratio      = */ 3.5,
 	/* .lsn                 = */ 0,
+	/* .bloom_fpr           = */ 0.05
 };
 
 const struct opt_def index_opts_reg[] = {
@@ -132,6 +133,7 @@ const struct opt_def index_opts_reg[] = {
 	OPT_DEF("run_count_per_level", OPT_INT, struct index_opts, run_count_per_level),
 	OPT_DEF("run_size_ratio", OPT_FLOAT, struct index_opts, run_size_ratio),
 	OPT_DEF("lsn", OPT_INT, struct index_opts, lsn),
+	OPT_DEF("bloom_fpr", OPT_FLOAT, struct index_opts, bloom_fpr),
 	{ NULL, opt_type_MAX, 0, 0 },
 };
 

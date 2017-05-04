@@ -118,8 +118,6 @@ struct vy_conf {
 	uint64_t memory_limit;
 	/* read cache quota */
 	uint64_t cache;
-	/* bloom filter false positive rate */
-	double bloom_fpr;
 };
 
 struct vy_env {
@@ -3891,7 +3889,7 @@ vy_task_dump_new(struct mempool *pool, struct vy_index *index,
 
 	task->run = run;
 	task->wi = wi;
-	task->bloom_fpr = index->env->conf->bloom_fpr;
+	task->bloom_fpr = index->index_def->opts.bloom_fpr;
 
 	vy_scheduler_remove_index(scheduler, index);
 
@@ -4128,7 +4126,7 @@ vy_task_compact_new(struct mempool *pool, struct vy_range *range,
 	task->range = range;
 	task->run = run;
 	task->wi = wi;
-	task->bloom_fpr = index->env->conf->bloom_fpr;
+	task->bloom_fpr = index->index_def->opts.bloom_fpr;
 
 	vy_scheduler_remove_range(scheduler, range);
 
@@ -4974,7 +4972,6 @@ vy_conf_new()
 	}
 	conf->memory_limit = cfg_getd("vinyl_memory");
 	conf->cache = cfg_getd("vinyl_cache");
-	conf->bloom_fpr = cfg_getd("vinyl_bloom_fpr");
 
 	conf->path = strdup(cfg_gets("vinyl_dir"));
 	if (conf->path == NULL) {
@@ -5125,6 +5122,7 @@ vy_index_info(struct vy_index *index, struct info_handler *h)
 	info_append_u32(h, "run_avg", index->run_count / index->range_count);
 	histogram_snprint(buf, sizeof(buf), index->run_hist);
 	info_append_str(h, "run_histogram", buf);
+	info_append_double(h, "bloom_fpr", index->index_def->opts.bloom_fpr);
 	info_end(h);
 }
 

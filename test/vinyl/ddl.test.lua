@@ -181,3 +181,26 @@ while pk:info().run_count ~= 1 do fiber.sleep(0.01) end
 pk:alter({range_size = page_size * 2})
 while pk:info().range_count < 2 do space:replace{1, pad} box.snapshot() fiber.sleep(0.01) end
 space:drop()
+
+--
+-- Compact runs with different bloom_fpr.
+--
+space = box.schema.space.create('test', {engine = 'vinyl'})
+pk = space:create_index('pk', {bloom_fpr = 0.45, run_count_per_level = 2})
+pk:info().bloom_fpr
+space:replace{1}
+space:replace{2}
+box.snapshot()
+space:replace{3}
+box.snapshot()
+while pk:info().run_count ~= 2 do fiber.sleep(0.01) end
+
+pk:alter({bloom_fpr = 0.70, run_count_per_level = 1})
+pk:info().bloom_fpr
+space:replace{4}
+space:replace{5}
+space:replace{6}
+box.snapshot()
+while pk:info().run_count ~= 1 do fiber.sleep(0.01) end
+space:select{}
+space:drop()
