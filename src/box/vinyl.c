@@ -36,6 +36,7 @@
 #include "vy_mem.h"
 #include "vy_run.h"
 #include "vy_cache.h"
+#include "vy_write_iterator.h"
 
 #include <dirent.h>
 
@@ -1803,35 +1804,6 @@ vy_run_dump_stmt(struct tuple *value, struct xlog *data_xlog,
 	return 0;
 }
 
-struct vy_write_iterator;
-
-static struct vy_write_iterator *
-vy_write_iterator_new(struct vy_env *env, const struct key_def *key_def,
-		      const struct key_def *user_key_def,
-		      struct tuple_format *surrogate_format,
-		      struct tuple_format *upsert_format,
-		      bool is_primary, uint64_t column_mask,
-		      bool is_last_level, int64_t oldest_vlsn);
-static NODISCARD int
-vy_write_iterator_add_run(struct vy_write_iterator *wi, struct vy_run *run);
-static NODISCARD int
-vy_write_iterator_add_mem(struct vy_write_iterator *wi, struct vy_mem *mem);
-static NODISCARD int
-vy_write_iterator_next(struct vy_write_iterator *wi, struct tuple **ret);
-
-/**
- * Delete the iterator and free resources.
- * Can be called only after cleanup().
- */
-static void
-vy_write_iterator_delete(struct vy_write_iterator *wi);
-
-/**
- * Free all resources allocated in a worker thread.
- */
-static void
-vy_write_iterator_cleanup(struct vy_write_iterator *wi);
-
 /**
  * Encode uint32_t array of row offsets (a page index) as xrow
  *
@@ -1935,16 +1907,17 @@ vy_run_write_page(struct vy_run_info *run_info, struct xlog *data_xlog,
 		}
 		*offset = page->unpacked_size;
 
-		if (stmt != NULL)
+		if (stmt != NULL && !vy_stmt_is_region_allocated(stmt))
 			tuple_unref(stmt);
 		stmt = *curr_stmt;
-		tuple_ref(stmt);
+		if (!vy_stmt_is_region_allocated(stmt))
+			tuple_ref(stmt);
 		if (vy_run_dump_stmt(stmt, data_xlog, page,
 				     key_def, is_primary) != 0)
 			goto error_rollback;
 		bloom_spectrum_add(bs, tuple_hash(stmt, user_key_def));
 
-		if (vy_write_iterator_next(wi, curr_stmt))
+		if (vy_write_iterator_next(wi, (const struct tuple **)curr_stmt))
 			goto error_rollback;
 
 		end_of_run = *curr_stmt == NULL ||
@@ -1974,7 +1947,8 @@ vy_run_write_page(struct vy_run_info *run_info, struct xlog *data_xlog,
 		if (run_info->max_key == NULL)
 			goto error_rollback;
 	}
-	tuple_unref(stmt);
+	if (!vy_stmt_is_region_allocated(stmt))
+		tuple_unref(stmt);
 	stmt = NULL;
 
 	/* Save offset to row index  */
@@ -2014,7 +1988,7 @@ error_rollback:
 	xlog_tx_rollback(data_xlog);
 error_page_index:
 	ibuf_destroy(&page_index_buf);
-	if (stmt != NULL)
+	if (stmt != NULL && !vy_stmt_is_region_allocated(stmt))
 		tuple_unref(stmt);
 	return -1;
 }
@@ -2499,8 +2473,7 @@ vy_range_get_dump_iterator(struct vy_range *range, int64_t vlsn,
 	*p_min_lsn = INT64_MAX;
 	*p_max_lsn = -1;
 
-	wi = vy_write_iterator_new(index->env, &index->index_def->key_def,
-				   &index->user_index_def->key_def,
+	wi = vy_write_iterator_new(&index->index_def->key_def,
 				   index->surrogate_format,
 				   index->upsert_format,
 				   index->index_def->iid == 0,
@@ -2519,7 +2492,6 @@ vy_range_get_dump_iterator(struct vy_range *range, int64_t vlsn,
 	}
 	return wi;
 err_wi_sub:
-	vy_write_iterator_cleanup(wi);
 	vy_write_iterator_delete(wi);
 err_wi:
 	return NULL;
@@ -2549,8 +2521,7 @@ vy_range_get_compact_iterator(struct vy_range *range, int run_count,
 	*p_min_lsn = INT64_MAX;
 	*p_max_lsn = -1;
 
-	wi = vy_write_iterator_new(index->env, &index->index_def->key_def,
-				   &index->user_index_def->key_def,
+	wi = vy_write_iterator_new(&index->index_def->key_def,
 				   index->surrogate_format,
 				   index->upsert_format,
 				   index->index_def->iid == 0,
@@ -2575,7 +2546,8 @@ vy_range_get_compact_iterator(struct vy_range *range, int run_count,
 	rlist_foreach_entry(run, &range->runs, in_range) {
 		if (run_count-- == 0)
 			break;
-		if (vy_write_iterator_add_run(wi, run) != 0)
+		if (vy_write_iterator_add_run(wi, run,
+					      &index->env->run_env.zdctx_key) != 0)
 			goto err_wi_sub;
 		*p_max_output_count += run->info.keys;
 		*p_min_lsn = MIN(*p_min_lsn, run->info.min_lsn);
@@ -2583,7 +2555,6 @@ vy_range_get_compact_iterator(struct vy_range *range, int run_count,
 	}
 	return wi;
 err_wi_sub:
-	vy_write_iterator_cleanup(wi);
 	vy_write_iterator_delete(wi);
 err_wi:
 	return NULL;
@@ -3637,15 +3608,13 @@ vy_task_dump_execute(struct vy_task *task)
 	assert(range->in_compact.pos == UINT32_MAX);
 
 	/* Start iteration. */
-	if (vy_write_iterator_next(wi, &stmt) != 0 ||
+	if (vy_write_iterator_next(wi, (const struct tuple **)&stmt) != 0 ||
 	    vy_range_write_run(range, wi, &stmt, &task->dump_size,
 			       task->max_output_count, task->bloom_fpr,
 			       &task->dumped_statements) != 0) {
-		vy_write_iterator_cleanup(wi);
 		return -1;
 	}
 
-	vy_write_iterator_cleanup(wi);
 	return 0;
 }
 
@@ -3806,7 +3775,7 @@ vy_task_split_execute(struct vy_task *task)
 	assert(range->in_compact.pos == UINT32_MAX);
 
 	/* Start iteration. */
-	if (vy_write_iterator_next(wi, &stmt) != 0)
+	if (vy_write_iterator_next(wi, (const struct tuple **)&stmt) != 0)
 		goto error;
 	assert(!rlist_empty(&range->split_list));
 	rlist_foreach_entry(r, &range->split_list, split_list) {
@@ -3822,10 +3791,8 @@ vy_task_split_execute(struct vy_task *task)
 				       &unused) != 0)
 			goto error;
 	}
-	vy_write_iterator_cleanup(wi);
 	return 0;
 error:
-	vy_write_iterator_cleanup(wi);
 	return -1;
 }
 
@@ -4066,15 +4033,13 @@ vy_task_compact_execute(struct vy_task *task)
 	assert(range->in_compact.pos == UINT32_MAX);
 
 	/* Start iteration. */
-	if (vy_write_iterator_next(wi, &stmt) != 0 ||
+	if (vy_write_iterator_next(wi, (const struct tuple **)&stmt) != 0 ||
 	    vy_range_write_run(range, wi, &stmt, &task->dump_size,
 			       task->max_output_count, task->bloom_fpr,
 			       &unused) != 0) {
-		vy_write_iterator_cleanup(wi);
 		return -1;
 	}
 
-	vy_write_iterator_cleanup(wi);
 	return 0;
 }
 
@@ -8202,353 +8167,6 @@ vy_merge_iterator_restore(struct vy_merge_iterator *itr,
 
 /* }}} Merge iterator */
 
-/* {{{ Write iterator */
-
-/**
- * Iterate over an in-memory index when writing it to disk (dump)
- * or over a series of sorted runs on disk to create a new sorted
- * run (compaction).
- *
- * Use merge iterator to order the output and filter out
- * too old statements (older than the oldest active read view).
- *
- * Squash multiple UPSERT statements over the same key into one,
- * if possible.
- *
- * Background
- * ----------
- * Vinyl provides support for consistent read views. The oldest
- * active read view is maintained in the transaction manager.
- * To support it, when dumping or compacting statements on disk,
- * older versions need to be preserved, and versions outside
- * any active read view garbage collected. This task is handled
- * by the write iterator.
- *
- * Filtering
- * ---------
- * Let's call each transaction consistent read view LSN vlsn.
- *
- *	oldest_vlsn = MIN(vlsn) over all active transactions
- *
- * Thus to preserve relevant data for every key and purge old
- * versions, the iterator works as follows:
- *
- *      If statement lsn is greater than oldest vlsn, the
- *      statement is preserved.
- *
- *      Otherwise, if statement type is REPLACE/DELETE, then
- *      it's returned, and the iterator can proceed to the
- *      next key: the readers do not need the history.
- *
- *      Otherwise, the statement is UPSERT, and in order
- *      to restore the original tuple from UPSERT the reader
- *      does need the history: they need to look for an older
- *      statement to which the UPSERT can be applied to get
- *      a tuple. This older statement can be UPSERT as well,
- *      and so on.
- *	In other words, of statement type is UPSERT, the reader
- *	needs a range of statements from the youngest statement
- *	with lsn <= vlsn to the youngest non-UPSERT statement
- *	with lsn <= vlsn, borders included.
- *
- *	All other versions of this key can be skipped, and hence
- *	garbage collected.
- *
- * Squashing and garbage collection
- * --------------------------------
- * Filtering and garbage collection, performed by write iterator,
- * must have no effect on read views of active transactions:
- * they should read the same data as before.
- *
- * On the other hand, old version should be deleted as soon as possible;
- * multiple UPSERTs could be merged together to take up less
- * space, or substituted with REPLACE.
- *
- * Here's how it's done:
- *
- *
- *	1) Every statement with lsn greater than oldest vlsn is preserved
- *	in the output, since there could be an active transaction
- *	that needs it.
- *
- *	2) For all statements with lsn <= oldest_vlsn, only a single
- *	resultant statement is returned. Here's how.
- *
- *	2.1) If the youngest statement with lsn <= oldest _vlsn is a
- *	REPLACE/DELETE, it becomes the resultant statement.
- *
- *	2.2) Otherwise, it as an UPSERT. Then we must iterate over
- *	all older LSNs for this key until we find a REPLACE/DELETE
- *	or exhaust all input streams for this key.
- *
- *	If the older lsn is a yet another UPSERT, two upserts are
- *	squashed together into one. Otherwise we found an
- *	REPLACE/DELETE, so apply all preceding UPSERTs to it and
- *	get the resultant statement.
- *
- * There is an extra twist to this algorithm, used when performing
- * compaction of the last LSM level (i.e. merging all existing
- * runs into one). The last level does not need to store DELETEs.
- * Thus we can:
- * 1) Completely skip the resultant statement from output if it's
- *    a DELETE.
- *     |      ...      |       |     ...      |
- *     |               |       |              |    ^
- *     +- oldest vlsn -+   =   +- oldest lsn -+    ^ lsn
- *     |               |       |              |    ^
- *     |    DELETE     |       +--------------+
- *     |      ...      |
- * 2) Replace an accumulated resultant UPSERT with an appropriate
- *    REPLACE.
- *     |      ...      |       |     ...      |
- *     |     UPSERT    |       |   REPLACE    |
- *     |               |       |              |    ^
- *     +- oldest vlsn -+   =   +- oldest lsn -+    ^ lsn
- *     |               |       |              |    ^
- *     |    DELETE     |       +--------------+
- *     |      ...      |
- */
-struct vy_write_iterator {
-	/** Vinyl environment. */
-	struct vy_env *env;
-	/** Index key definition used for storing statements on disk. */
-	const struct key_def *key_def;
-	/** Index key definition defined by the user. */
-	const struct key_def *user_key_def;
-	/**
-	 * Format to allocate new REPLACE and DELETE tuples from
-	 * vy_run. We have to store the reference to the format
-	 * separate from index, because the index can be altered
-	 * during work of the iterator.
-	 */
-	struct tuple_format *surrogate_format;
-	/** Same as surrogate_format, but for UPSERT tuples. */
-	struct tuple_format *upsert_format;
-	/** Set if this iterator is for a primary index. */
-	bool is_primary;
-	/** Index column mask. */
-	uint64_t column_mask;
-	/* The minimal VLSN among all active transactions */
-	int64_t oldest_vlsn;
-	/* There are is no level older than the one we're writing to. */
-	bool is_last_level;
-	/* On the next iteration we must move to the next key */
-	bool goto_next_key;
-	struct tuple *key;
-	struct tuple *tmp_stmt;
-	struct vy_merge_iterator mi;
-	/* Usage statistics of mem iterators */
-	struct vy_iterator_stat mem_iterator_stat;
-	/* Usage statistics of run iterators */
-	struct vy_iterator_stat run_iterator_stat;
-};
-
-/*
- * Open an empty write iterator. To add sources to the iterator
- * use vy_write_iterator_add_* functions
- */
-static int
-vy_write_iterator_open(struct vy_write_iterator *wi, struct vy_env *env,
-		       const struct key_def *key_def,
-		       const struct key_def *user_key_def,
-		       struct tuple_format *surrogate_format,
-		       struct tuple_format *upsert_format,
-		       bool is_primary, uint64_t column_mask,
-		       bool is_last_level, uint64_t oldest_vlsn)
-{
-	wi->env = env;
-	wi->oldest_vlsn = oldest_vlsn;
-	wi->is_last_level = is_last_level;
-	wi->goto_next_key = false;
-
-	wi->key = vy_stmt_new_select(env->key_format, NULL, 0);
-	if (wi->key == NULL)
-		return -1;
-	wi->key_def = key_def;
-	wi->user_key_def = user_key_def;
-	wi->surrogate_format = surrogate_format;
-	wi->upsert_format = upsert_format;
-	tuple_format_ref(surrogate_format, 1);
-	tuple_format_ref(upsert_format, 1);
-	wi->is_primary = is_primary;
-	wi->column_mask = column_mask;
-	vy_merge_iterator_open(&wi->mi, ITER_GE, wi->key, key_def,
-			       surrogate_format, upsert_format, is_primary);
-	return 0;
-}
-
-static struct vy_write_iterator *
-vy_write_iterator_new(struct vy_env *env, const struct key_def *key_def,
-		      const struct key_def *user_key_def,
-		      struct tuple_format *surrogate_format,
-		      struct tuple_format *upsert_format,
-		      bool is_primary, uint64_t column_mask,
-		      bool is_last_level, int64_t oldest_vlsn)
-{
-	struct vy_write_iterator *wi = calloc(1, sizeof(*wi));
-	if (wi == NULL) {
-		diag_set(OutOfMemory, sizeof(*wi), "calloc", "wi");
-		return NULL;
-	}
-	if (vy_write_iterator_open(wi, env, key_def, user_key_def,
-				   surrogate_format, upsert_format,
-				   is_primary, column_mask,
-				   is_last_level, oldest_vlsn) != 0) {
-		free(wi);
-		return NULL;
-	}
-	return wi;
-}
-
-static NODISCARD int
-vy_write_iterator_add_run(struct vy_write_iterator *wi, struct vy_run *run)
-{
-	struct vy_merge_src *src;
-	src = vy_merge_iterator_add(&wi->mi, false, false);
-	if (src == NULL)
-		return -1;
-	vy_run_iterator_open(&src->run_iterator, false, &wi->run_iterator_stat,
-			     &wi->env->run_env, run, ITER_GE, wi->key,
-			     &wi->env->xm->p_global_read_view,
-			     wi->key_def, wi->user_key_def,
-			     wi->surrogate_format, wi->upsert_format,
-			     wi->is_primary);
-	return 0;
-}
-
-static NODISCARD int
-vy_write_iterator_add_mem(struct vy_write_iterator *wi, struct vy_mem *mem)
-{
-	struct vy_merge_src *src;
-	src = vy_merge_iterator_add(&wi->mi, false, false);
-	if (src == NULL)
-		return -1;
-	vy_mem_iterator_open(&src->mem_iterator, &wi->mem_iterator_stat,
-			     mem, ITER_GE, wi->key, &wi->env->xm->p_global_read_view);
-	return 0;
-}
-
-/**
- * The write iterator can return multiple LSNs for the same
- * key, thus next() will automatically switch to the next
- * key when it's appropriate.
- *
- * The user of the write iterator simply expects a stream
- * of statements to write to the output.
- */
-static NODISCARD int
-vy_write_iterator_next(struct vy_write_iterator *wi, struct tuple **ret)
-{
-	/*
-	 * Nullify the result stmt. If the next stmt is not
-	 * found, this is a marker of the end of the stream.
-	 */
-	*ret = NULL;
-	/*
-	 * The write iterator guarantees that the returned stmt
-	 * is alive until the next invocation of next(). If the
-	 * returned stmt is obtained from the merge iterator,
-	 * this guarantee is fulfilled by the merge iterator
-	 * itself. If the write iterator creates the returned
-	 * stmt, e.g. by squashing a bunch of upserts, then
-	 * it must dereference the created stmt here.
-	 */
-	if (wi->tmp_stmt)
-		tuple_unref(wi->tmp_stmt);
-	wi->tmp_stmt = NULL;
-	struct vy_merge_iterator *mi = &wi->mi;
-	struct tuple *stmt = NULL;
-	/* @sa vy_write_iterator declaration for the algorithm description. */
-	while (true) {
-		if (wi->goto_next_key) {
-			wi->goto_next_key = false;
-			if (vy_merge_iterator_next_key(mi, &stmt))
-				return -1;
-		} else {
-			if (vy_merge_iterator_next_lsn(mi, &stmt))
-				return -1;
-			if (stmt == NULL &&
-			    vy_merge_iterator_next_key(mi, &stmt))
-				return -1;
-		}
-		if (stmt == NULL)
-			return 0;
-		if (vy_stmt_lsn(stmt) > wi->oldest_vlsn)
-			break; /* Save the current stmt as the result. */
-		wi->goto_next_key = true;
-		if (vy_stmt_type(stmt) == IPROTO_DELETE && wi->is_last_level)
-			continue; /* Skip unnecessary DELETE */
-		if (vy_stmt_type(stmt) == IPROTO_REPLACE ||
-		    vy_stmt_type(stmt) == IPROTO_DELETE) {
-			/*
-			 * If the tuple has extra size - it has
-			 * column mask of an update operation.
-			 * The tuples from secondary indexes
-			 * which don't modify its keys can be
-			 * skipped during dump,
-			 * @sa vy_can_skip_update().
-			 */
-			if (!wi->is_primary &&
-			    vy_can_skip_update(wi->column_mask,
-					       vy_stmt_column_mask(stmt)))
-				continue;
-			break; /* It's the resulting statement */
-		}
-
-		/* Squash upserts */
-		assert(vy_stmt_type(stmt) == IPROTO_UPSERT);
-		if (vy_merge_iterator_squash_upsert(mi, &stmt, false, NULL)) {
-			tuple_unref(stmt);
-			return -1;
-		}
-		if (vy_stmt_type(stmt) == IPROTO_UPSERT && wi->is_last_level) {
-			/* Turn UPSERT to REPLACE. */
-			struct tuple *applied;
-			applied = vy_apply_upsert(stmt, NULL, wi->key_def,
-						  wi->surrogate_format,
-						  wi->upsert_format,
-						  wi->is_primary, false, NULL);
-			tuple_unref(stmt);
-			if (applied == NULL)
-				return -1;
-			stmt = applied;
-		}
-		wi->tmp_stmt = stmt;
-		break;
-	}
-	*ret = stmt;
-	return 0;
-}
-
-static void
-vy_write_iterator_cleanup(struct vy_write_iterator *wi)
-{
-	assert(! cord_is_main());
-	if (wi->tmp_stmt != NULL)
-		tuple_unref(wi->tmp_stmt);
-	wi->tmp_stmt = NULL;
-	if (wi->key != NULL)
-		tuple_unref(wi->key);
-	wi->key = NULL;
-	vy_merge_iterator_cleanup(&wi->mi);
-}
-
-static void
-vy_write_iterator_delete(struct vy_write_iterator *wi)
-{
-	assert(cord_is_main());
-
-	assert(wi->tmp_stmt == NULL);
-	assert(wi->key == NULL);
-	tuple_format_ref(wi->surrogate_format, -1);
-	tuple_format_ref(wi->upsert_format, -1);
-	vy_merge_iterator_close(&wi->mi);
-
-	free(wi);
-}
-
-/* Write iterator }}} */
-
 /* {{{ Iterator over index */
 
 static void
@@ -8993,7 +8611,7 @@ vy_send_range_f(struct cbus_call_msg *cmsg)
 
 	int rc;
 	struct tuple *stmt;
-	while ((rc = vy_write_iterator_next(ctx->wi, &stmt)) == 0 &&
+	while ((rc = vy_write_iterator_next(ctx->wi, (const struct tuple **)&stmt)) == 0 &&
 	       stmt != NULL) {
 		struct xrow_header xrow;
 		rc = vy_stmt_encode_primary(stmt, ctx->key_def,
@@ -9007,7 +8625,6 @@ vy_send_range_f(struct cbus_call_msg *cmsg)
 			break;
 		fiber_gc();
 	}
-	vy_write_iterator_cleanup(ctx->wi);
 	fiber_gc();
 	return rc;
 }
@@ -9023,7 +8640,7 @@ vy_send_range(struct vy_join_ctx *ctx)
 		return 0; /* nothing to do */
 
 	int rc = -1;
-	ctx->wi = vy_write_iterator_new(ctx->env, ctx->key_def, ctx->key_def,
+	ctx->wi = vy_write_iterator_new(ctx->key_def,
 					ctx->format, ctx->upsert_format,
 					true, 0, true, INT64_MAX);
 	if (ctx->wi == NULL)
@@ -9031,7 +8648,8 @@ vy_send_range(struct vy_join_ctx *ctx)
 
 	struct vy_run *run;
 	rlist_foreach_entry(run, &ctx->runs, in_join) {
-		if (vy_write_iterator_add_run(ctx->wi, run) != 0)
+		if (vy_write_iterator_add_run(ctx->wi, run,
+					      &ctx->env->run_env.zdctx_key) != 0)
 			goto out_delete_wi;
 	}
 
