@@ -1,4 +1,5 @@
 local ffi   = require('ffi')
+local fun   = require('fun')
 local errno = require('errno')
 
 -- GID_T, UID_T and TIME_T are, essentially, `integer types`.
@@ -80,7 +81,8 @@ ffi.cdef[[
     void           setgrent();
 ]]
 
-local function _getpw(uid)
+-- wrappers around getpwuid/getpwnam (automatic type detection)
+local function getpw_w(uid)
     local pw = nil
     errno(0)
     if type(uid) == 'number' then
@@ -93,7 +95,8 @@ local function _getpw(uid)
     return pw
 end
 
-local function _getgr(gid)
+-- wrappers around getgruid/getgrnam (automatic type detection)
+local function getgr_w(gid)
     local gr = nil
     errno(0)
     if type(gid) == 'number' then
@@ -108,46 +111,41 @@ end
 
 local pwgr_errstr = "get%s* failed [errno %d]: %s"
 
+local function getgr_i_gen(group_members, pos)
+    local member = group_members[pos]
+    if member == nil then
+        return nil
+    end
+    return pos + 1, member
+end
+
+-- parses system record and move it into lua table
+local function getgr_i(gr)
+    local members = fun.iter(getgr_i_gen, gr.gr_mem, 0):map(ffi.string):totable()
+    local group = {
+        id      = tonumber(gr.gr_gid),
+        name    = ffi.string(gr.gr_name),
+        members = members,
+    }
+    return group
+end
+
 local function getgr(gid)
     if gid == nil then
         gid = tonumber(ffi.C.getgid())
     end
-    local gr = _getgr(gid)
+    local gr = getgr_w(gid)
     if gr == nil then
         if errno() ~= 0 then
             error(pwgr_errstr:format('pw', errno(), errno.strerror()), 2)
         end
         return nil
     end
-    local gr_mem, group_members = gr.gr_mem, {}
-    local i = 0
-    while true do
-        local member = gr_mem[i]
-        if member == nil then
-            break
-        end
-        table.insert(group_members, ffi.string(member))
-        i = i + 1
-    end
-    local group = {
-        id      = tonumber(gr.gr_gid),
-        name    = ffi.string(gr.gr_name),
-        members = group_members,
-    }
-    return group
+    return getgr_i(gr)
 end
 
-local function getpw(uid)
-    if uid == nil then
-        uid = tonumber(ffi.C.getuid())
-    end
-    local pw = _getpw(uid)
-    if pw == nil then
-        if errno() ~= 0 then
-            error(pwgr_errstr:format('pw', errno(), errno.strerror()), 2)
-        end
-        return nil
-    end
+-- parses system record and move it into lua table
+local function getpw_i(pw)
     local user = {
         name    = ffi.string(pw.pw_name),
         id      = tonumber(pw.pw_uid),
@@ -158,45 +156,61 @@ local function getpw(uid)
     return user
 end
 
+local function getpw(uid)
+    if uid == nil then
+        uid = tonumber(ffi.C.getuid())
+    end
+    local pw = getpw_w(uid)
+    if pw == nil then
+        if errno() ~= 0 then
+            error(pwgr_errstr:format('pw', errno(), errno.strerror()), 2)
+        end
+        return nil
+    end
+    return getpw_i(pw)
+end
+
+local function getpwall_gen(env, arg)
+    local entry = ffi.C.getpwent()
+    if entry == nil or errno() ~= 0 then
+        return nil
+    end
+    return arg + 1, entry
+end
+
 local function getpwall()
     errno(0)
+    -- set to beginning of list
     ffi.C.setpwent()
-    if errno() ~= 0 then
-        return nil
-    end
-    local pws = {}
-    while true do
-        local pw = ffi.C.getpwent()
-        if pw == nil then
-            break
-        end
-        table.insert(pws, getpw(pw.pw_uid))
-    end
+    if errno() ~= 0 then return nil end
+    -- read records one by one
+    local pws = fun.iter(getpwall_gen, {}, 1):map(getpw_i):totable()
+    if errno() ~= 0 then return nil end
+    -- finish processing list of users
     ffi.C.endpwent()
-    if errno() ~= 0 then
+    if errno() ~= 0 then return nil end
+    return pws
+end
+
+local function getgrall_gen(env, arg)
+    local entry = ffi.C.getgrent()
+    if entry == nil or errno() ~= 0 then
         return nil
     end
-    return pws
+    return arg + 1, entry
 end
 
 local function getgrall()
     errno(0)
-    ffi.C.setgrent()
-    if errno() ~= 0 then
-        return nil
-    end
-    local grs = {}
-    while true do
-        local gr = ffi.C.getgrent()
-        if gr == nil then
-            break
-        end
-        table.insert(grs, getpw(gr.gr_gid))
-    end
+    -- set to beginning of list
+    ffi.C.getgrent()
+    if errno() ~= 0 then return nil end
+    -- read records one by one
+    local grs = fun.iter(getgrall_gen, {}, 1):map(getgr_i):totable()
+    if errno() ~= 0 then return nil end
+    -- finish processing list of groups
     ffi.C.endgrent()
-    if errno() ~= 0 then
-        return nil
-    end
+    if errno() ~= 0 then return nil end
     return grs
 end
 
