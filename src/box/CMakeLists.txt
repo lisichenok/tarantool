@@ -98,6 +98,11 @@ add_library(box STATIC
     lua/sql.c
     ${bin_sources})
 
+# Generated headers (opcodes.h and parse.h) is used by
+# src/box/sql.c. Add BUILDIR to headers path for this file only. 
+set_source_files_properties(
+    sql.c
+    PROPERTY COMPILE_FLAGS "-I${PROJECT_BINARY_DIR}/src/box/sql")
 target_link_libraries(box ${ZSTD_LIBRARIES} sql)
 
 add_dependencies(box build_bundled_libs)

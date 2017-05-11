@@ -8,6 +8,11 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
 
 set(SRCDIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+include_directories(${SRCDIR})
+
+# Make opcodes.h and parse.h headers visible
+include_directories(${CMAKE_BINARY_DIR}/src/box/sql)
+
 add_custom_command(OUTPUT keywordhash.h
     COMMAND ${CMAKE_BINARY_DIR}/extra/mkkeywordhash > keywordhash.h
     DEPENDS mkkeywordhash)
@@ -30,12 +35,6 @@ add_custom_command(OUTPUT opcodes.c
     COMMAND ${TCLSH} ${CMAKE_SOURCE_DIR}/extra/mkopcodec.tcl opcodes.h > opcodes.c
 )
 
-add_custom_command(OUTPUT sqlite3.h
-    DEPENDS sqlite.h.in
-    COMMAND ${TCLSH} ${CMAKE_SOURCE_DIR}/extra/mksqlite3h.tcl ${SRCDIR} > sqlite3.h
-)
-
-add_definitions(-D_HAVE_SQLITE_CONFIG_H=1)
 add_definitions(-DSQLITE_MAX_WORKER_THREADS=0)
 add_definitions(-DSQLITE_OMIT_VACUUM=1)
 
@@ -44,8 +43,7 @@ add_custom_target(generate_sql_files DEPENDS
     keywordhash.h
     parse.h
     parse.c
-    opcodes.c
-    sqlite3.h)
+    opcodes.c)
 
 set(TEST_DEFINITIONS
     SQLITE_NO_SYNC=1
