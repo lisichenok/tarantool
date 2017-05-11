@@ -40,8 +40,6 @@ extern "C" {
 
 struct tarantool_coro {
 	coro_context ctx;
-	/** Coro stack slab. */
-	void *stack_slab;
 	/** Coro stack addr. */
 	void *stack;
 	/** Coro stack size. */
@@ -50,18 +48,15 @@ struct tarantool_coro {
 	unsigned int stack_id;
 };
 
-struct slab_cache;
-
 void
 tarantool_coro_init();
 
-int
+void
 tarantool_coro_create(struct tarantool_coro *ctx,
-		      struct slab_cache *cache,
+		      void *stack, size_t stack_size,
 		      void (*f) (void *), void *data);
 void
-tarantool_coro_destroy(struct tarantool_coro *ctx,
-		       struct slab_cache *cache);
+tarantool_coro_destroy(struct tarantool_coro *ctx);
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */

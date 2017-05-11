@@ -102,7 +102,20 @@ enum fiber_key {
 	FIBER_KEY_MAX = 4
 };
 
+
+
 /** \cond public */
+
+struct fiber_attr;
+
+API_EXPORT struct fiber_attr *
+fiber_attr_new();
+
+API_EXPORT void
+fiber_attr_delete(struct fiber_attr *fiber_attr);
+
+API_EXPORT void
+fiber_attr_setstacksize(struct fiber_attr *fiber_attr, size_t stack_size);
 
 struct fiber;
 /**
@@ -129,6 +142,10 @@ typedef int (*fiber_func)(va_list);
  */
 API_EXPORT struct fiber *
 fiber_new(const char *name, fiber_func f);
+
+API_EXPORT struct fiber *
+fiber_new_ex(const char *name, struct fiber_attr *fiber_attr,
+	     fiber_func f, va_list args);
 
 /**
  * Return control to another fiber and wait until it'll be woken.
@@ -243,6 +260,10 @@ cord_slab_cache(void);
 
 /** \endcond public */
 
+struct fiber_attr {
+	size_t stack_size;
+};
+
 struct fiber {
 	struct tarantool_coro coro;
 	/* A garbage-collected memory pool. */
@@ -288,9 +309,8 @@ struct fiber {
 	void *fls[FIBER_KEY_MAX];
 	/** Exception which caused this fiber's death. */
 	struct diag diag;
+	struct slab *stack_slab;
 };
-
-enum { FIBER_CALL_STACK = 16 };
 
 struct cord_on_exit;
 

@@ -89,6 +89,33 @@ update_last_stack_frame(struct fiber *fiber)
 
 }
 
+#define DEFAULT_FIBER_STACK_SIZE	65536
+
+struct fiber_attr *
+fiber_attr_new()
+{
+	struct fiber_attr *fiber_attr =
+		(struct fiber_attr *)malloc(sizeof(fiber_attr));
+	if (fiber_attr == NULL)  {
+		diag_set(OutOfMemory, sizeof(fiber_attr), "runtime", "fiber attr");
+		return NULL;
+	}
+	fiber_attr->stack_size = DEFAULT_FIBER_STACK_SIZE;
+	return fiber_attr;
+}
+
+void
+fiber_attr_delete(struct fiber_attr *fiber_attr)
+{
+	free(fiber_attr);
+}
+
+void
+fiber_attr_setstacksize(struct fiber_attr *fiber_attr, size_t stack_size)
+{
+	fiber_attr->stack_size = stack_size;
+}
+
 static void
 fiber_recycle(struct fiber *fiber);
 
@@ -648,11 +675,20 @@ fiber_new(const char *name, fiber_func f)
 		}
 		memset(fiber, 0, sizeof(struct fiber));
 
-		if (tarantool_coro_create(&fiber->coro, &cord->slabc,
-					  fiber_loop, NULL)) {
+		void *stack;
+		size_t stack_size = DEFAULT_FIBER_STACK_SIZE;
+		stack_size -= slab_sizeof();
+		fiber->stack_slab = slab_get(&cord->slabc, stack_size);
+		if (fiber->stack_slab == NULL) {
+			diag_set(OutOfMemory, stack_size, "runtime arena",
+				 "fiber stack");
 			mempool_free(&cord->fiber_mempool, fiber);
 			return NULL;
 		}
+		stack = (void *)fiber->stack_slab + slab_sizeof();
+
+		tarantool_coro_create(&fiber->coro, stack, stack_size,
+				      fiber_loop, NULL);
 
 		region_create(&fiber->gc, &cord->slabc);
 
@@ -695,7 +731,8 @@ fiber_destroy(struct cord *cord, struct fiber *f)
 	trigger_destroy(&f->on_stop);
 	rlist_del(&f->state);
 	region_destroy(&f->gc);
-	tarantool_coro_destroy(&f->coro, &cord->slabc);
+	tarantool_coro_destroy(&f->coro);
+	slab_put(&cord->slabc, f->stack_slab);
 	diag_destroy(&f->diag);
 }
 

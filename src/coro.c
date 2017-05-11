@@ -54,12 +54,7 @@
  * contains a slab header at the beginning we should not touch.
  */
 static size_t coro_page_size;
-static size_t coro_stack_size;
 static int coro_stack_direction;
-
-enum {
-	CORO_STACK_PAGES = 16,
-};
 
 static inline void *
 coro_page_align_down(void *ptr)
@@ -83,25 +78,17 @@ void
 tarantool_coro_init()
 {
 	coro_page_size = sysconf(_SC_PAGESIZE);
-	coro_stack_size = coro_page_size * CORO_STACK_PAGES;
 	coro_stack_direction =
 		test_stack_grows_down(__builtin_frame_address(0)) ? -1: 1;
 }
 
-int
+void
 tarantool_coro_create(struct tarantool_coro *coro,
-		      struct slab_cache *slabc,
+		      void *stack, size_t stack_size,
 		      void (*f) (void *), void *data)
 {
 	memset(coro, 0, sizeof(*coro));
 
-	coro->stack_slab = (char *) slab_get(slabc, coro_stack_size);
-
-	if (coro->stack_slab == NULL) {
-		diag_set(OutOfMemory, coro_stack_size,
-			 "runtime arena", "coro stack");
-		return -1;
-	}
 	void *guard;
 	/* Adjust begin and size for stack memory chunk. */
 	if (coro_stack_direction < 0) {
@@ -111,10 +98,9 @@ tarantool_coro_create(struct tarantool_coro *coro,
 		 * after protected page until end of memory chunk can be
 		 * used for coro stack usage.
 		 */
-		guard = coro_page_align_up(coro->stack_slab + slab_sizeof());
+		guard = coro_page_align_up(stack);
 		coro->stack = guard + coro_page_size;
-		coro->stack_size = coro_stack_size -
-				   (coro->stack - coro->stack_slab);
+		coro->stack_size = stack_size - (coro->stack - stack);
 
 	} else {
 		/*
@@ -122,10 +108,8 @@ tarantool_coro_create(struct tarantool_coro *coro,
 		 * memory from begin of chunk until protected page can
 		 * be used for coro stack usage
 		 */
-		guard = coro_page_align_down(coro->stack_slab +
-					     coro_stack_size) -
-			coro_page_size;
-		coro->stack = coro->stack_slab + slab_sizeof();
+		guard = coro_page_align_down(stack + stack_size) - coro_page_size;
+		coro->stack = stack;
 		coro->stack_size = guard - coro->stack;
 	}
 
@@ -136,26 +120,21 @@ tarantool_coro_create(struct tarantool_coro *coro,
 	mprotect(guard, coro_page_size, PROT_NONE);
 
 	coro_create(&coro->ctx, f, data, coro->stack, coro->stack_size);
-	return 0;
 }
 
 void
-tarantool_coro_destroy(struct tarantool_coro *coro, struct slab_cache *slabc)
+tarantool_coro_destroy(struct tarantool_coro *coro)
 {
 	if (coro->stack != NULL) {
 		VALGRIND_STACK_DEREGISTER(coro->stack_id);
 #if ENABLE_ASAN
 		ASAN_UNPOISON_MEMORY_REGION(coro->stack, coro->stack_size);
 #endif
-		void *guard;
-		if (coro_stack_direction < 0)
-			guard = coro_page_align_up(coro->stack_slab + slab_sizeof());
-		else
-			guard = coro_page_align_down(coro->stack_slab +
-						     coro_stack_size) -
-				coro_page_size;
-
-		mprotect(guard, coro_page_size, PROT_READ | PROT_WRITE);
-		slab_put(slabc, coro->stack_slab);
 	}
+	void *guard;
+	if (coro_stack_direction < 0)
+		guard = coro->stack - coro_page_size;
+	else
+		guard = coro->stack + coro->stack_size;
+	mprotect(guard, coro_page_size, PROT_READ | PROT_WRITE);
 }
